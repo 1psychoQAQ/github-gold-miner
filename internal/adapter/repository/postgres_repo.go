@@ -48,6 +48,12 @@ func (r *PostgresRepo) Exists(ctx context.Context, repoID string) (bool, error) 
 	return count > 0, err
 }
 
+// MarkAsNotified 标记项目为已推送
+func (r *PostgresRepo) MarkAsNotified(ctx context.Context, repoID string) error {
+	result := r.db.WithContext(ctx).Model(&domain.Repo{}).Where("id = ?", repoID).Update("already_notified", true)
+	return result.Error
+}
+
 // Search 根据关键词搜索 (对应你的提问查询需求)
 func (r *PostgresRepo) Search(ctx context.Context, query string) ([]*domain.Repo, error) {
 	var repos []*domain.Repo
@@ -55,10 +61,32 @@ func (r *PostgresRepo) Search(ctx context.Context, query string) ([]*domain.Repo
 	// 搜索 名字、描述 或 AI 分析内容
 	likeQuery := "%" + query + "%"
 	err := r.db.WithContext(ctx).
-		Where("name LIKE ? OR description LIKE ? OR deep_analysis LIKE ?", likeQuery, likeQuery, likeQuery).
-		Order("commercial_score DESC, educational_score DESC"). // 优先展示高价值项目
-		Limit(10).                                              // 只返回前10条
+		Where("name LIKE ? OR description LIKE ? OR llm_review LIKE ?", likeQuery, likeQuery, likeQuery).
+		Order("llm_score DESC"). // 优先展示高价值项目
+		Limit(10).               // 只返回前10条
 		Find(&repos).Error
 
+	return repos, err
+}
+
+// GetAllCandidates 获取所有（或最近的 N 个）项目，供 AI 筛选
+func (r *PostgresRepo) GetAllCandidates(ctx context.Context) ([]*domain.Repo, error) {
+	var repos []*domain.Repo
+	// 我们取出最近更新、或者分数还不错的项目，上限 100 个
+	// Gemini 1.5 Flash 处理 100 个项目的 JSON 数据非常轻松
+	err := r.db.WithContext(ctx).
+		Order("created_at desc"). // 按创建时间排序
+		Limit(100).               // 限制数量，防止 Token 爆炸
+		Find(&repos).Error
+	return repos, err
+}
+
+// GetUnnotifiedRepos 获取未推送的项目
+func (r *PostgresRepo) GetUnnotifiedRepos(ctx context.Context) ([]*domain.Repo, error) {
+	var repos []*domain.Repo
+	err := r.db.WithContext(ctx).
+		Where("already_notified = ?", false).
+		Order("llm_score DESC"). // 按LLM评分排序
+		Find(&repos).Error
 	return repos, err
 }
