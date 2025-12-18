@@ -23,7 +23,7 @@ func NewGeminiAppraiser(ctx context.Context, apiKey string) (*GeminiAppraiser, e
 		return nil, err
 	}
 
-	model := client.GenerativeModel("gemini-3-pro-preview")
+	model := client.GenerativeModel("gemini-2.5-pro")
 	// 强制要求返回 JSON，降低解析错误的概率
 	model.ResponseMIMEType = "application/json"
 
