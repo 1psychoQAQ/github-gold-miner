@@ -41,6 +41,12 @@ go run cmd/app/main.go -mode=mine -interval=30
 go run cmd/app/main.go -mode=mine -concurrency=5
 ```
 
+> 提示：如果你希望实时收到推送，请在运行前设置 `FEISHU_WEBHOOK` 环境变量，否则服务会保守地跳过通知步骤。
+
+### 执行脚本
+
+仓库自带 `scripts/run_mining.sh`，会在进入项目目录后以 30 分钟间隔、5 个并发持续运行挖矿流程，并将执行结果写入 `/var/log/github-gold-miner.log`。默认脚本也展示了如何配置代理环境变量；根据需要修改代理地址、执行参数或日志路径，然后配合 `chmod +x scripts/run_mining.sh` 与 `crontab`/`launchd` 等调度工具即可实现无人值守运行。
+
 ## 定时执行配置
 
 定时执行模式支持优雅关闭，当收到SIGINT或SIGTERM信号时会完成当前任务后退出。

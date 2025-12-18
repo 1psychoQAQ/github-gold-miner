@@ -1,6 +1,7 @@
 package filter
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -9,53 +10,136 @@ import (
 )
 
 func TestRepoFilter_FilterByCreatedAt(t *testing.T) {
-	filter := &RepoFilter{}
-
 	now := time.Now()
-	repos := []*domain.Repo{
+
+	tests := []struct {
+		name       string
+		repos      []*domain.Repo
+		maxDaysOld int
+		verify     func(*testing.T, []*domain.Repo)
+	}{
 		{
-			ID:        "1",
-			Name:      "repo1",
-			CreatedAt: now.AddDate(0, 0, -5), // 5天前创建
+			name: "过滤掉老项目",
+			repos: []*domain.Repo{
+				{
+					Name:      "new-repo",
+					CreatedAt: now.AddDate(0, 0, -5), // 5天前
+				},
+				{
+					Name:      "old-repo",
+					CreatedAt: now.AddDate(0, 0, -15), // 15天前
+				},
+			},
+			maxDaysOld: 10,
+			verify: func(t *testing.T, result []*domain.Repo) {
+				assert.Equal(t, 1, len(result))
+				assert.Equal(t, "new-repo", result[0].Name)
+			},
 		},
 		{
-			ID:        "2",
-			Name:      "repo2",
-			CreatedAt: now.AddDate(0, 0, -15), // 15天前创建
+			name: "保留边界项目",
+			repos: []*domain.Repo{
+				{
+					Name:      "boundary-repo",
+					CreatedAt: now.AddDate(0, 0, -10), // 正好10天前
+				},
+			},
+			maxDaysOld: 10,
+			verify: func(t *testing.T, result []*domain.Repo) {
+				assert.Equal(t, 1, len(result))
+				assert.Equal(t, "boundary-repo", result[0].Name)
+			},
 		},
 		{
-			ID:        "3",
-			Name:      "repo3",
-			CreatedAt: now.AddDate(0, 0, -8), // 8天前创建
+			name:       "空列表",
+			repos:      []*domain.Repo{},
+			maxDaysOld: 10,
+			verify: func(t *testing.T, result []*domain.Repo) {
+				assert.Equal(t, 0, len(result))
+			},
+		},
+		{
+			name: "所有项目都太老",
+			repos: []*domain.Repo{
+				{
+					Name:      "very-old-repo",
+					CreatedAt: now.AddDate(0, 0, -20),
+				},
+			},
+			maxDaysOld: 10,
+			verify: func(t *testing.T, result []*domain.Repo) {
+				assert.Equal(t, 0, len(result))
+			},
 		},
 	}
 
-	// 过滤10天内创建的项目
-	filtered := filter.FilterByCreatedAt(repos, 10)
-
-	assert.Equal(t, 2, len(filtered))
-	assert.Equal(t, "1", filtered[0].ID)
-	assert.Equal(t, "3", filtered[1].ID)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filter := &RepoFilter{nowFunc: func() time.Time { return now }}
+			result := filter.FilterByCreatedAt(tt.repos, tt.maxDaysOld)
+			tt := tt
+			tt.verify(t, result)
+		})
+	}
 }
 
 func TestRepoFilter_FilterByRecentCommit(t *testing.T) {
-	// 这个测试比较难模拟，因为我们依赖外部GitHub API
-	// 在实际应用中，我们会使用mock来模拟GitHub客户端行为
-	// 这里只是示例框架
-	filter := &RepoFilter{}
-	
-	repos := []*domain.Repo{
+	tests := []struct {
+		name   string
+		repos  []*domain.Repo
+		verify func(*testing.T, []*domain.Repo, error)
+	}{
 		{
-			ID:  "1",
-			URL: "https://github.com/test/repo1",
+			name: "正常处理项目",
+			repos: []*domain.Repo{
+				{
+					Name: "valid-repo",
+					URL:  "https://github.com/owner/repo",
+				},
+			},
+			verify: func(t *testing.T, result []*domain.Repo, err error) {
+				assert.NoError(t, err)
+				// 由于我们没有设置真实的GitHub客户端，所以结果可能为空
+				// 但我们主要关心的是不返回错误
+				assert.NotNil(t, result)
+			},
+		},
+		{
+			name: "无效URL格式",
+			repos: []*domain.Repo{
+				{
+					Name: "invalid-repo",
+					URL:  "not-a-github-url",
+				},
+			},
+			verify: func(t *testing.T, result []*domain.Repo, err error) {
+				assert.NoError(t, err)
+				// 不应该返回错误，即使URL无效
+				assert.NotNil(t, result)
+			},
+		},
+		{
+			name:  "空列表",
+			repos: []*domain.Repo{},
+			verify: func(t *testing.T, result []*domain.Repo, err error) {
+				assert.NoError(t, err)
+				// 空列表应该返回空结果而不是nil
+				if result == nil {
+					assert.Fail(t, "result should not be nil")
+				} else {
+					assert.Equal(t, 0, len(result))
+				}
+			},
 		},
 	}
-	
-	// 由于需要真实的GitHub API调用，我们在这里只是演示测试结构
-	// 在实际测试中，我们会mock GitHub客户端
-	filtered, err := filter.FilterByRecentCommit(nil, repos)
-	
-	// 在实际测试中，我们会做更具体的断言
-	assert.NoError(t, err)
-	assert.NotNil(t, filtered)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filter := &RepoFilter{}
+			ctx := context.Background()
+
+			result, err := filter.FilterByRecentCommit(ctx, tt.repos)
+			tt.verify(t, result, err)
+		})
+	}
 }

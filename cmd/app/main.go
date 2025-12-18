@@ -16,8 +16,8 @@ import (
 	"github-gold-miner/internal/adapter/gemini"
 	"github-gold-miner/internal/adapter/github"
 	"github-gold-miner/internal/adapter/repository"
-	"github-gold-miner/internal/domain"
 	"github-gold-miner/internal/port"
+	"github-gold-miner/internal/service"
 )
 
 func main() {
@@ -44,17 +44,21 @@ func main() {
 		log.Fatalf("❌ AI 初始化失败: %v", err)
 	}
 
+	// 初始化通知器
+	feishuWebhook := os.Getenv("FEISHU_WEBHOOK")
+	notifier := feishu.NewNotifier(feishuWebhook)
+
 	// 4. 根据模式分流
 	if *interval > 0 {
 		// 定时执行模式
-		runScheduledMining(repoStore, appraiser, *interval, *concurrency)
+		runScheduledMining(repoStore, appraiser, notifier, *interval, *concurrency)
 	} else {
 		// 单次执行模式
 		switch *mode {
 		case "search":
 			runSearch(repoStore, appraiser, *query)
 		case "mine":
-			runMining(repoStore, appraiser, *concurrency)
+			runMining(repoStore, appraiser, notifier, *concurrency)
 		default:
 			fmt.Println("❌ 未知模式，请使用 -mode=mine 或 -mode=search")
 		}
@@ -62,7 +66,7 @@ func main() {
 }
 
 // runScheduledMining 运行定时挖矿任务
-func runScheduledMining(repoStore port.Repository, appraiser port.Appraiser, interval int, concurrency int) {
+func runScheduledMining(repoStore port.Repository, appraiser port.Appraiser, notifier port.Notifier, interval int, concurrency int) {
 	// 创建带取消功能的context
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -78,13 +82,13 @@ func runScheduledMining(repoStore port.Repository, appraiser port.Appraiser, int
 	fmt.Println("按下 Ctrl+C 可以优雅停止程序")
 	
 	// 立即执行一次
-	executeMiningCycle(repoStore, appraiser, concurrency)
+	executeMiningCycle(repoStore, appraiser, notifier, concurrency)
 	
 	// 定时执行
 	for {
 		select {
 		case <-ticker.C:
-			executeMiningCycle(repoStore, appraiser, concurrency)
+			executeMiningCycle(repoStore, appraiser, notifier, concurrency)
 		case <-sigChan:
 			fmt.Println("\n👋 收到停止信号，正在退出...")
 			return
@@ -96,10 +100,9 @@ func runScheduledMining(repoStore port.Repository, appraiser port.Appraiser, int
 }
 
 // executeMiningCycle 执行一次挖矿周期
-func executeMiningCycle(repoStore port.Repository, appraiser port.Appraiser, concurrency int) {
+func executeMiningCycle(repoStore port.Repository, appraiser port.Appraiser, notifier port.Notifier, concurrency int) {
 	// 获取环境变量
 	githubToken := os.Getenv("GITHUB_TOKEN")
-	feishuWebhook := os.Getenv("FEISHU_WEBHOOK")
 
 	// 为整个挖矿周期设置超时时间(5分钟)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -110,109 +113,12 @@ func executeMiningCycle(repoStore port.Repository, appraiser port.Appraiser, con
 	repoFilter := filter.NewRepoFilter(githubToken)
 	repoAnalyzer := analyzer.NewRepoAnalyzer(appraiser)
 	repoAnalyzer.SetMaxGoroutines(concurrency) // 设置并发数
-	notifier := feishu.NewNotifier(feishuWebhook)
 
-	fmt.Println("🚀 [挖矿模式] 开始搜寻AI编程工具金矿...")
+	// 创建挖矿服务
+	miningService := service.NewMiningService(fetcher, repoFilter, repoAnalyzer, repoStore, appraiser, notifier)
 
-	// 1. 数据源 (Fetcher)
-	fmt.Println("📥 正在抓取 GitHub Trending 项目...")
-	trendingRepos, err := fetcher.GetTrendingRepos(ctx, "all", "weekly")
-	if err != nil {
-		log.Printf("❌ 获取 trending repos 失败: %v", err)
-	} else {
-		fmt.Printf("✅ 成功获取 %d 个 trending 项目\n", len(trendingRepos))
-	}
-
-	// 获取指定 topics 的项目
-	topics := []string{"ai-coding", "ide-extension", "dev-tools"}
-	var topicRepos []*domain.Repo
-	for _, topic := range topics {
-		fmt.Printf("📥 正在抓取 topic '%s' 的项目...\n", topic)
-		repos, err := fetcher.GetReposByTopic(ctx, topic)
-		if err != nil {
-			log.Printf("❌ 获取 topic '%s' 的 repos 失败: %v", topic, err)
-			continue
-		}
-		topicRepos = append(topicRepos, repos...)
-		fmt.Printf("✅ 成功获取 %d 个 '%s' topic 项目\n", len(repos), topic)
-	}
-
-	// 合并所有项目
-	allRepos := append(trendingRepos, topicRepos...)
-
-	// 2. 初筛漏斗 (Hard Filter)
-	fmt.Println("🔍 开始初筛...")
-	// 时效性过滤：创建时间在10天内
-	filteredRepos := repoFilter.FilterByCreatedAt(allRepos, 10)
-	fmt.Printf("✅ 时效性过滤后剩余 %d 个项目\n", len(filteredRepos))
-
-	// 活跃度过滤：近期有commit提交
-	filteredRepos, err = repoFilter.FilterByRecentCommit(ctx, filteredRepos)
-	if err != nil {
-		log.Printf("⚠️ 活跃度过滤出错: %v", err)
-	}
-	fmt.Printf("✅ 活跃度过滤后剩余 %d 个项目\n", len(filteredRepos))
-
-	// 3. 深度分析 (Analyzer)
-	fmt.Println("🧠 开始深度分析...")
-	// 数学模型分析：计算Star增长速率
-	reposWithGrowthRate := repoAnalyzer.CalculateStarGrowthRate(filteredRepos)
-	fmt.Printf("✅ 已计算 %d 个项目的Star增长速率\n", len(reposWithGrowthRate))
-
-	// LLM分析：判断是否为AI编程工具并评分
-	analyzedRepos, err := repoAnalyzer.AnalyzeWithLLM(ctx, reposWithGrowthRate)
-	if err != nil {
-		log.Printf("⚠️ LLM分析出错: %v", err)
-	}
-	fmt.Printf("✅ 已完成 %d 个项目的LLM分析\n", len(analyzedRepos))
-
-	// 4. 存储和推送
-	fmt.Println("💾 开始存储和推送...")
-	successCount := 0
-	for _, repo := range analyzedRepos {
-		// 检查context是否已超时或取消
-		select {
-		case <-ctx.Done():
-			fmt.Println("⏰ 执行时间过长，提前结束存储和推送阶段")
-			goto finish
-		default:
-		}
-
-		// 只处理被识别为AI编程工具且评分较高的项目
-		// 降低阈值以便更容易推送项目进行测试
-		if !repo.IsAIProgrammingTool || repo.LLMScore < 50 {
-			continue
-		}
-
-		// 检查是否已存在
-		exists, _ := repoStore.Exists(ctx, repo.ID)
-		if exists {
-			fmt.Printf("⏭️ 项目 %s 已存在\n", repo.Name)
-			continue
-		}
-
-		// 保存到数据库
-		if err := repoStore.Save(ctx, repo); err != nil {
-			log.Printf("❌ 保存项目 %s 失败: %v", repo.Name, err)
-			continue
-		}
-
-		// 推送到飞书
-		if err := notifier.Notify(ctx, repo); err != nil {
-			log.Printf("⚠️ 推送项目 %s 失败: %v", repo.Name, err)
-		} else {
-			// 标记为已推送
-			repoStore.MarkAsNotified(ctx, repo.ID)
-			fmt.Printf("📲 已推送项目 %s\n", repo.Name)
-			successCount++
-		}
-
-		// 避免触发 API 限制
-		time.Sleep(3 * time.Second)
-	}
-
-finish:
-	fmt.Printf("🎉 本轮挖矿完成，共推送 %d 个项目\n", successCount)
+	// 执行挖矿周期
+	miningService.ExecuteMiningCycle(ctx, concurrency)
 }
 
 // --- 搜索模式逻辑 ---
@@ -252,6 +158,6 @@ func runSearch(repoStore port.Repository, appraiser port.Appraiser, query string
 }
 
 // --- 挖矿模式逻辑 ---
-func runMining(repoStore port.Repository, appraiser port.Appraiser, concurrency int) {
-	executeMiningCycle(repoStore, appraiser, concurrency)
+func runMining(repoStore port.Repository, appraiser port.Appraiser, notifier port.Notifier, concurrency int) {
+	executeMiningCycle(repoStore, appraiser, notifier, concurrency)
 }

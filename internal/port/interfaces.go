@@ -30,6 +30,9 @@ type Analyzer interface {
 
 	// 使用LLM分析项目是否为AI编程工具及其评分
 	AnalyzeWithLLM(ctx context.Context, repos []*domain.Repo) ([]*domain.Repo, error)
+	
+	// 设置并发数
+	SetMaxGoroutines(max int)
 }
 
 // Appraiser (鉴定师): 负责调用 LLM 进行价值评估

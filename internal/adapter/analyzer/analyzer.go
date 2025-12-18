@@ -12,15 +12,17 @@ import (
 
 // RepoAnalyzer 实现了 port.Analyzer 接口
 type RepoAnalyzer struct {
-	appraiser    port.Appraiser
+	appraiser     port.Appraiser
 	maxGoroutines int // 最大并发数
+	nowFunc       func() time.Time
 }
 
 // NewRepoAnalyzer 创建新的分析器实例
 func NewRepoAnalyzer(appraiser port.Appraiser) *RepoAnalyzer {
 	return &RepoAnalyzer{
-		appraiser:    appraiser,
-		maxGoroutines: 3, // 默认并发数为3
+		appraiser:     appraiser,
+		maxGoroutines: 3,        // 默认并发数为3
+		nowFunc:       time.Now, // 便于测试注入当前时间
 	}
 }
 
@@ -33,9 +35,14 @@ func (a *RepoAnalyzer) SetMaxGoroutines(max int) {
 
 // CalculateStarGrowthRate 计算Star增长率
 func (a *RepoAnalyzer) CalculateStarGrowthRate(repos []*domain.Repo) []*domain.Repo {
+	current := time.Now()
+	if a != nil && a.nowFunc != nil {
+		current = a.nowFunc()
+	}
+
 	for _, repo := range repos {
 		// 计算项目存活天数
-		daysAlive := time.Since(repo.CreatedAt).Hours() / 24
+		daysAlive := current.Sub(repo.CreatedAt).Hours() / 24
 		if daysAlive <= 0 {
 			repo.StarGrowthRate = 0
 		} else {
