@@ -18,6 +18,8 @@ import (
 	"github-gold-miner/internal/adapter/repository"
 	"github-gold-miner/internal/port"
 	"github-gold-miner/internal/service"
+
+	"github.com/robfig/cron/v3"
 )
 
 func main() {
@@ -25,6 +27,7 @@ func main() {
 	mode := flag.String("mode", "mine", "运行模式: mine (挖矿) 或 search (搜索)")
 	query := flag.String("q", "", "搜索关键词 (仅在 search 模式下有效)")
 	interval := flag.Int("interval", 0, "定时执行间隔（分钟），0表示只执行一次")
+	schedule := flag.String("schedule", "", "定时执行 cron 表达式，如 '30 9 * * *' 表示每天9:30执行")
 	concurrency := flag.Int("concurrency", 3, "LLM分析并发数")
 	flag.Parse()
 
@@ -49,8 +52,11 @@ func main() {
 	notifier := feishu.NewNotifier(feishuWebhook)
 
 	// 4. 根据模式分流
-	if *interval > 0 {
-		// 定时执行模式
+	if *schedule != "" {
+		// cron 定时执行模式
+		runCronScheduledMining(repoStore, appraiser, notifier, *schedule, *concurrency)
+	} else if *interval > 0 {
+		// 间隔执行模式
 		runScheduledMining(repoStore, appraiser, notifier, *interval, *concurrency)
 	} else {
 		// 单次执行模式
@@ -65,7 +71,41 @@ func main() {
 	}
 }
 
-// runScheduledMining 运行定时挖矿任务
+// runCronScheduledMining 使用 cron 表达式定时执行挖矿任务
+func runCronScheduledMining(repoStore port.Repository, appraiser port.Appraiser, notifier port.Notifier, schedule string, concurrency int) {
+	// 创建 cron 调度器（使用标准 cron 格式：分 时 日 月 周）
+	c := cron.New()
+
+	// 添加定时任务
+	_, err := c.AddFunc(schedule, func() {
+		fmt.Printf("\n⏰ [%s] 定时任务触发，开始执行挖矿...\n", time.Now().Format("2006-01-02 15:04:05"))
+		executeMiningCycle(repoStore, appraiser, notifier, concurrency)
+	})
+	if err != nil {
+		log.Fatalf("❌ 无效的 cron 表达式 '%s': %v", schedule, err)
+	}
+
+	// 设置信号处理，优雅关闭
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// 启动 cron 调度器
+	c.Start()
+	fmt.Printf("⏰ Cron 定时执行模式已启动\n")
+	fmt.Printf("📅 调度规则: %s\n", schedule)
+	fmt.Println("💡 常用表达式:")
+	fmt.Println("   '30 9 * * *'  = 每天 9:30")
+	fmt.Println("   '0 */2 * * *' = 每2小时整点")
+	fmt.Println("   '0 9,18 * * *' = 每天 9:00 和 18:00")
+	fmt.Println("按下 Ctrl+C 可以优雅停止程序")
+
+	// 等待停止信号
+	<-sigChan
+	fmt.Println("\n👋 收到停止信号，正在退出...")
+	c.Stop()
+}
+
+// runScheduledMining 运行定时挖矿任务（按间隔）
 func runScheduledMining(repoStore port.Repository, appraiser port.Appraiser, notifier port.Notifier, interval int, concurrency int) {
 	// 创建带取消功能的context
 	ctx, cancel := context.WithCancel(context.Background())
