@@ -35,4 +35,4 @@ go.work.sum
 bin/
 
 coverage.html
-coverage.out
+coverage.outmain
