@@ -51,7 +51,7 @@ func (n *Notifier) Notify(ctx context.Context, repo *domain.Repo) error {
 		repo.LLMReview,
 		repo.StarGrowthRate)
 
-	// 3. 构造 Schema 2.0 JSON 结构
+	// 3. 构造 Schema 2.0 JSON 结构 (飞书卡片格式)
 	payload := map[string]interface{}{
 		"msg_type": "interactive",
 		"card": map[string]interface{}{
@@ -65,14 +65,18 @@ func (n *Notifier) Notify(ctx context.Context, repo *domain.Repo) error {
 					"content": title,
 				},
 				"template": "blue",
+				"padding":  "12px 12px 12px 12px",
 			},
 			"body": map[string]interface{}{
 				"direction": "vertical",
+				"padding":   "12px 12px 12px 12px",
 				"elements": []map[string]interface{}{
 					{
-						"tag":       "markdown",
-						"content":   mdContent,
-						"text_size": "normal",
+						"tag":        "markdown",
+						"content":    mdContent,
+						"text_align": "left",
+						"text_size":  "normal_v2",
+						"margin":     "0px 0px 0px 0px",
 					},
 					{
 						"tag": "button",
@@ -80,11 +84,17 @@ func (n *Notifier) Notify(ctx context.Context, repo *domain.Repo) error {
 							"tag":     "plain_text",
 							"content": "🔗 查看源码",
 						},
-						"type": "primary",
+						"type":   "default",
+						"width":  "default",
+						"size":   "medium",
+						"margin": "0px 0px 0px 0px",
 						"behaviors": []map[string]interface{}{
 							{
 								"type":        "open_url",
 								"default_url": repo.URL,
+								"pc_url":      "",
+								"ios_url":     "",
+								"android_url": "",
 							},
 						},
 					},

@@ -371,7 +371,7 @@ func TestNotifier_Notify_PayloadStructure(t *testing.T) {
 		// 验证 markdown 元素
 		markdownElement := elements[0].(map[string]interface{})
 		assert.Equal(t, "markdown", markdownElement["tag"])
-		assert.Equal(t, "normal", markdownElement["text_size"])
+		assert.Equal(t, "normal_v2", markdownElement["text_size"])
 		content := markdownElement["content"].(string)
 		assert.Contains(t, content, "250")      // stars
 		assert.Contains(t, content, "82")       // LLM score
@@ -381,7 +381,7 @@ func TestNotifier_Notify_PayloadStructure(t *testing.T) {
 		// 验证 button 元素
 		buttonElement := elements[1].(map[string]interface{})
 		assert.Equal(t, "button", buttonElement["tag"])
-		assert.Equal(t, "primary", buttonElement["type"])
+		assert.Equal(t, "default", buttonElement["type"])
 
 		buttonText := buttonElement["text"].(map[string]interface{})
 		assert.Equal(t, "plain_text", buttonText["tag"])
