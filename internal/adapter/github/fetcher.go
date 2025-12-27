@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github-gold-miner/internal/common"
 	"github-gold-miner/internal/domain"
 
 	"github.com/google/go-github/v53/github"
@@ -59,7 +60,15 @@ func (f *Fetcher) GetTrendingRepos(ctx context.Context, language string, since s
 		},
 	}
 
-	result, _, err := f.client.Search.Repositories(ctx, query, opts)
+	var result *github.RepositoriesSearchResult
+	err := common.Do(ctx, func() error {
+		var apiErr error
+		result, _, apiErr = f.client.Search.Repositories(ctx, query, opts)
+		return apiErr
+	},
+		common.WithMaxRetries(3),
+		common.WithInitialDelay(time.Second),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API 调用失败: %w", err)
 	}
@@ -93,7 +102,15 @@ func (f *Fetcher) GetReposByTopic(ctx context.Context, topic string) ([]*domain.
 	}
 
 	query := fmt.Sprintf("topic:%s", topic)
-	result, _, err := f.client.Search.Repositories(ctx, query, opts)
+	var result *github.RepositoriesSearchResult
+	err := common.Do(ctx, func() error {
+		var apiErr error
+		result, _, apiErr = f.client.Search.Repositories(ctx, query, opts)
+		return apiErr
+	},
+		common.WithMaxRetries(3),
+		common.WithInitialDelay(time.Second),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API 调用失败: %w", err)
 	}

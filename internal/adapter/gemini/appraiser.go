@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
+	"github-gold-miner/internal/common"
 	"github-gold-miner/internal/domain"
 
 	"github.com/google/generative-ai-go/genai"
@@ -64,15 +66,27 @@ func (g *GeminiAppraiser) Appraise(ctx context.Context, repo *domain.Repo) (*dom
 }
 `, repo.Name, repo.Description, repo.URL)
 
-	// 2. 调用 AI (增加重试或错误处理)
-	resp, err := g.model.GenerateContent(ctx, genai.Text(prompt))
+	// 2. 调用 AI (带重试机制)
+	var resp *genai.GenerateContentResponse
+	err := common.Do(ctx, func() error {
+		var apiErr error
+		resp, apiErr = g.model.GenerateContent(ctx, genai.Text(prompt))
+		if apiErr != nil {
+			return apiErr
+		}
+		// 空响应也视为需要重试的错误
+		if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
+			return fmt.Errorf("AI 返回内容为空")
+		}
+		return nil
+	},
+		common.WithMaxRetries(5),
+		common.WithInitialDelay(2*time.Second),
+		common.WithMaxDelay(30*time.Second),
+	)
 	if err != nil {
 		// 即使 AI 挂了，也要返回 repo，防止 main.go 崩溃
 		return repo, fmt.Errorf("AI 调用失败: %w", err)
-	}
-
-	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
-		return repo, fmt.Errorf("AI 返回内容为空")
 	}
 
 	// 3. 解析结果 (智能清洗逻辑)
@@ -153,14 +167,25 @@ func (g *GeminiAppraiser) SemanticSearch(ctx context.Context, repos []*domain.Re
 （如果没有匹配的项目，请直接回答"没有找到合适的项目"）
 `, promptData.String(), userQuery)
 
-	// 3. 调用 AI
-	resp, err := g.model.GenerateContent(ctx, genai.Text(prompt))
+	// 3. 调用 AI (带重试机制)
+	var resp *genai.GenerateContentResponse
+	err := common.Do(ctx, func() error {
+		var apiErr error
+		resp, apiErr = g.model.GenerateContent(ctx, genai.Text(prompt))
+		if apiErr != nil {
+			return apiErr
+		}
+		if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
+			return fmt.Errorf("AI 返回内容为空")
+		}
+		return nil
+	},
+		common.WithMaxRetries(5),
+		common.WithInitialDelay(2*time.Second),
+		common.WithMaxDelay(30*time.Second),
+	)
 	if err != nil {
 		return "", fmt.Errorf("AI 检索失败: %w", err)
-	}
-
-	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
-		return "AI 未返回结果", nil
 	}
 
 	part := resp.Candidates[0].Content.Parts[0]

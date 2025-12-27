@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
+	"github-gold-miner/internal/common"
 	"github-gold-miner/internal/domain"
 )
 
@@ -91,16 +93,25 @@ func (n *Notifier) Notify(ctx context.Context, repo *domain.Repo) error {
 		},
 	}
 
-	// 4. 发送请求
+	// 4. 发送请求 (带重试机制)
 	body, _ := json.Marshal(payload)
-	resp, err := http.Post(n.webhookURL, "application/json", bytes.NewBuffer(body))
+	err := common.Do(ctx, func() error {
+		resp, postErr := http.Post(n.webhookURL, "application/json", bytes.NewBuffer(body))
+		if postErr != nil {
+			return postErr
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != 200 {
+			return fmt.Errorf("飞书 API 报错: 状态码 %d", resp.StatusCode)
+		}
+		return nil
+	},
+		common.WithMaxRetries(3),
+		common.WithInitialDelay(500*time.Millisecond),
+	)
 	if err != nil {
 		return fmt.Errorf("发送请求失败: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("飞书 API 报错: 状态码 %d", resp.StatusCode)
 	}
 
 	return nil
