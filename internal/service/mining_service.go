@@ -118,7 +118,11 @@ func (m *MiningService) ExecuteMiningCycle(ctx context.Context, concurrency int)
 		}
 
 		// 检查是否已存在
-		exists, _ := m.repoStore.Exists(ctx, repo.ID)
+		exists, err := m.repoStore.Exists(ctx, repo.ID)
+		if err != nil {
+			log.Printf("❌ 检查项目 %s 是否存在时出错: %v，跳过该项目", repo.Name, err)
+			continue
+		}
 		if exists {
 			fmt.Printf("⏭️ 项目 %s 已存在\n", repo.Name)
 			continue

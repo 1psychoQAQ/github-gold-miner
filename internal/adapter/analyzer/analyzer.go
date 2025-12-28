@@ -83,6 +83,13 @@ func (a *RepoAnalyzer) analyzeRepoWorker(
 			continue
 		}
 
+		// 防止空指针
+		if analyzedRepo == nil {
+			fmt.Printf("   [Worker-%d] ⚠️ %s 返回空结果\n", workerID, repo.Name)
+			results <- repo
+			continue
+		}
+
 		// 更新repo信息
 		repo.IsAIProgrammingTool = analyzedRepo.IsAIProgrammingTool
 		repo.LLMScore = analyzedRepo.LLMScore
@@ -123,13 +130,16 @@ func (a *RepoAnalyzer) AnalyzeWithLLM(ctx context.Context, repos []*domain.Repo)
 	}()
 
 	// 等待完成或超时
+	var ctxErr error
 	select {
 	case <-done:
 		// 所有任务完成
 	case <-ctx.Done():
-		// 上下文超时或取消
-		fmt.Println("⏰ LLM分析因超时或取消而中断")
-		return repos, ctx.Err()
+		// 上下文超时或取消，但仍需等待 workers 退出以避免协程泄漏
+		fmt.Println("⏰ LLM分析因超时或取消而中断，等待工作协程退出...")
+		ctxErr = ctx.Err()
+		<-done // 等待所有 workers 完成
+		fmt.Println("✅ 所有工作协程已退出")
 	}
 
 	// 关闭channels
@@ -142,14 +152,18 @@ func (a *RepoAnalyzer) AnalyzeWithLLM(ctx context.Context, repos []*domain.Repo)
 		analyzedRepos = append(analyzedRepos, result)
 	}
 
-	// 打印错误信息（如果有）
-	if len(errors) > 0 {
-		fmt.Printf("⚠️  共有 %d 个分析错误:\n", len(errors))
-		for err := range errors {
+	// 收集并打印错误信息
+	var collectedErrors []error
+	for err := range errors {
+		collectedErrors = append(collectedErrors, err)
+	}
+	if len(collectedErrors) > 0 {
+		fmt.Printf("⚠️  共有 %d 个分析错误:\n", len(collectedErrors))
+		for _, err := range collectedErrors {
 			fmt.Printf("   错误: %v\n", err)
 		}
 	}
 
 	fmt.Println("✅ LLM分析完成")
-	return analyzedRepos, nil
+	return analyzedRepos, ctxErr
 }

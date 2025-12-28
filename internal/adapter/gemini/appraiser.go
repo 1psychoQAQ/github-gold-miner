@@ -35,6 +35,14 @@ func NewGeminiAppraiser(ctx context.Context, apiKey string) (*GeminiAppraiser, e
 	}, nil
 }
 
+// Close 关闭 Gemini 客户端，释放资源
+func (g *GeminiAppraiser) Close() error {
+	if g.client != nil {
+		return g.client.Close()
+	}
+	return nil
+}
+
 // ContentGenerator 定义了我们需要用到的 AI 能力
 // 这样我们在测试时就可以用假的实现来替换真的 SDK
 type ContentGenerator interface {

@@ -19,10 +19,16 @@ import (
 	"github-gold-miner/internal/port"
 	"github-gold-miner/internal/service"
 
+	"github.com/joho/godotenv"
 	"github.com/robfig/cron/v3"
 )
 
 func main() {
+	// 0. 加载 .env 文件（如果存在）
+	if err := godotenv.Load(); err != nil {
+		log.Println("💡 未找到 .env 文件，将使用系统环境变量")
+	}
+
 	// 1. 定义命令行参数
 	mode := flag.String("mode", "mine", "运行模式: mine (挖矿) 或 search (搜索)")
 	query := flag.String("q", "", "搜索关键词 (仅在 search 模式下有效)")
@@ -32,8 +38,11 @@ func main() {
 	flag.Parse()
 
 	// 2. 初始化公共依赖 (数据库)
-	// 确保环境变量已设置
-	dsn := "host=localhost user=postgres password=123456 dbname=gold_miner port=5432 sslmode=disable TimeZone=Asia/Shanghai"
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		log.Println("⚠️  DATABASE_URL 未设置，使用本地默认配置（仅限开发环境）")
+		dsn = "host=localhost user=postgres password=postgres dbname=gold_miner port=5432 sslmode=disable TimeZone=Asia/Shanghai"
+	}
 	repoStore, err := repository.NewPostgresRepo(dsn)
 	if err != nil {
 		log.Fatalf("❌ DB 初始化失败: %v", err)
@@ -46,6 +55,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("❌ AI 初始化失败: %v", err)
 	}
+	defer appraiser.Close() // 程序退出时关闭 Gemini 客户端
 
 	// 初始化通知器
 	feishuWebhook := os.Getenv("FEISHU_WEBHOOK")
