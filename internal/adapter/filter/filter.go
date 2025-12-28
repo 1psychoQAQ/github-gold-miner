@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
 	"strings"
 	"time"
 
@@ -74,13 +75,20 @@ func (f *RepoFilter) FilterByRecentCommit(ctx context.Context, repos []*domain.R
 		// 从repo URL中提取owner和repo name
 		// URL格式: https://github.com/owner/repo
 		var owner, repoName string
-		_, err := fmt.Sscanf(repo.URL, "https://github.com/%s/%s", &owner, &repoName)
-		if err != nil {
+		u, err := url.Parse(repo.URL)
+		if err != nil || u.Host != "github.com" {
 			// 如果无法解析URL，保留该项目以防万一
 			log.Printf("[Filter] 无法解析仓库URL %s: %v", repo.URL, err)
 			filtered = append(filtered, repo)
 			continue
 		}
+		parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+		if len(parts) < 2 {
+			log.Printf("[Filter] 无法解析仓库URL %s: 路径格式不正确", repo.URL)
+			filtered = append(filtered, repo)
+			continue
+		}
+		owner, repoName = parts[0], parts[1]
 
 		// 检查是否有实际代码提交(非README-only)
 		hasRealCommit, err := f.hasNonReadmeCommit(ctx, owner, repoName)
